@@ -104,21 +104,43 @@ Ollama после установки работает как служба на `
 
 ### 3. Приложение
 
+**Linux / macOS:**
+
 ```bash
 git clone <URL репозитория>
 cd <папка репозитория>
-python -m venv .venv
-# Linux / macOS:
+python3 -m venv .venv
 source .venv/bin/activate
-# Windows:
-.venv\Scripts\activate
 
 # Без GPU сначала поставьте облегчённый torch для CPU (быстрее скачивается):
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 pip install -r requirements.txt
-cp .env.example .env        # Windows: copy .env.example .env
+cp .env.example .env
 ```
+
+**Windows (PowerShell):**
+
+```powershell
+git clone <URL репозитория>
+cd <папка репозитория>
+python -m venv .venv
+
+# Один раз: разрешить запуск скрипта активации окружения
+# (без этого PowerShell выдаёт ошибку «выполнение сценариев отключено в этой системе»)
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+.venv\Scripts\Activate.ps1
+
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
+copy .env.example .env
+```
+
+Замечания для Windows:
+
+- если ffmpeg устанавливали через `winget` уже после открытия PowerShell, закройте окно и откройте новое: иначе ffmpeg не будет найден. Можно также указать полный путь к `ffmpeg.exe` в `.env` (`FFMPEG_PATH`);
+- права администратора и режим разработчика не нужны: модели скачиваются обычными файлами в `data/models`.
 
 ### 4. Запуск
 
