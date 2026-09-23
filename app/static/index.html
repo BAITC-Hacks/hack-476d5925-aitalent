@@ -64,6 +64,13 @@
   .progress { padding: 14px; border-radius: 8px; background: #EAF3F4; margin-bottom: 16px; }
   .error-box { padding: 14px; border-radius: 8px; background: #FBE7E5; color: var(--rec); margin-bottom: 16px; white-space: pre-wrap; }
   .transcript { max-height: 70vh; overflow: auto; }
+  .player { width: 100%; margin-bottom: 10px; }
+  .tools { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .tools input { flex: 1; }
+  .utt.clickable { cursor: pointer; }
+  .utt.clickable:hover time { color: var(--primary); }
+  .utt.playing { background: #EAF3F4; box-shadow: inset 3px 0 0 var(--primary); }
+  mark { background: #FFE9A8; color: inherit; padding: 0 1px; border-radius: 2px; }
   .utt { display: grid; grid-template-columns: 48px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px solid #EEF1F4; }
   .utt time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; padding-top: 2px; }
   .spk { font-weight: 600; font-size: 13px; }
@@ -180,6 +187,11 @@
         <div class="speakers" id="m-speakers"></div>
         <div class="actions" style="margin-bottom:10px" id="speakers-actions" hidden>
           <button class="btn" id="save-speakers">Сохранить имена</button>
+        </div>
+        <audio class="player" id="m-audio" controls preload="metadata" hidden></audio>
+        <div class="tools">
+          <input type="text" id="m-search" placeholder="Поиск по стенограмме" aria-label="Поиск по стенограмме">
+          <span class="meta" id="m-search-count"></span>
         </div>
         <div class="transcript" id="m-transcript"></div>
       </div>
@@ -376,11 +388,8 @@ function renderMeeting(m) {
       <input type="text" data-spk="${esc(s)}" value="${esc(m.speakers[s] || "")}" placeholder="Имя"></label>`).join("");
   $("#speakers-actions").hidden = !order.length || m.diarization_method === "text";
 
-  $("#m-transcript").innerHTML = m.segments.length ? m.segments.map(s => `
-    <div class="utt"><time>${fmtTs(s.start)}</time>
-      <div><span class="spk" style="color:${color(s.speaker)}">${esc(name(s.speaker))}</span>
-      <span class="lang">${LANG_LABEL[s.lang] || ""}</span><div>${esc(s.text)}</div></div></div>`).join("")
-    : `<p class="empty">${busy ? "Стенограмма появится после распознавания." : "Речь не распознана."}</p>`;
+  setupAudio(m);
+  renderTranscript(m, color, name, busy);
 
   $("#m-summary").textContent = m.summary || (busy ? "Появится после анализа." : "—");
   $("#m-decisions-panel").hidden = !m.decisions.length;
@@ -388,6 +397,65 @@ function renderMeeting(m) {
   $("#m-tasks").innerHTML = m.tasks.length ? taskTable(m.tasks, false) : `<p class="empty">${busy ? "Поручения появятся после анализа." : "Поручения не выявлены."}</p>`;
   bindTaskControls($("#m-tasks"), () => openMeeting(m.id));
 }
+
+// ---------- стенограмма: поиск, воспроизведение с места реплики ----------
+let audioFor = null;
+function setupAudio(m) {
+  const audio = $("#m-audio");
+  audio.hidden = !m.has_audio;
+  if (m.has_audio && audioFor !== m.id) {
+    audio.src = `/api/meetings/${m.id}/audio`;
+    audioFor = m.id;
+    $("#m-search").value = "";
+  }
+  if (!m.has_audio) { audio.removeAttribute("src"); audioFor = null; }
+}
+
+function highlight(text, q) {
+  const safe = esc(text);
+  if (!q) return safe;
+  const re = new RegExp(esc(q).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  return safe.replace(re, x => `<mark>${x}</mark>`);
+}
+
+let lastRender = null;
+function renderTranscript(m, color, name, busy) {
+  lastRender = { m, color, name, busy };
+  const q = $("#m-search").value.trim();
+  const shown = q ? m.segments.filter(s => s.text.toLowerCase().includes(q.toLowerCase())
+                                        || name(s.speaker).toLowerCase().includes(q.toLowerCase())) : m.segments;
+  $("#m-search-count").textContent = q ? `найдено: ${shown.length}` : "";
+  const clickable = m.has_audio ? " clickable" : "";
+  $("#m-transcript").innerHTML = shown.length ? shown.map(s => `
+    <div class="utt${clickable}" data-start="${s.start}" data-end="${s.end}" ${m.has_audio ? 'tabindex="0" title="Прослушать с этого места"' : ""}>
+      <time>${fmtTs(s.start)}</time>
+      <div><span class="spk" style="color:${color(s.speaker)}">${esc(name(s.speaker))}</span>
+      <span class="lang">${LANG_LABEL[s.lang] || ""}</span><div>${highlight(s.text, q)}</div></div></div>`).join("")
+    : `<p class="empty">${q ? "Ничего не найдено." : busy ? "Стенограмма появится после распознавания." : "Речь не распознана."}</p>`;
+  if (m.has_audio) {
+    document.querySelectorAll("#m-transcript .utt").forEach(u => {
+      const play = () => { const a = $("#m-audio"); a.currentTime = parseFloat(u.dataset.start); a.play(); };
+      u.onclick = play;
+      u.onkeydown = e => { if (e.key === "Enter") play(); };
+    });
+  }
+}
+$("#m-search").oninput = () => { if (lastRender) { const r = lastRender; renderTranscript(r.m, r.color, r.name, r.busy); } };
+
+// подсветка реплики, которая сейчас звучит
+$("#m-audio").ontimeupdate = () => {
+  const t = $("#m-audio").currentTime;
+  let current = null;
+  document.querySelectorAll("#m-transcript .utt").forEach(u => {
+    const on = t >= parseFloat(u.dataset.start) && t < parseFloat(u.dataset.end);
+    u.classList.toggle("playing", on);
+    if (on) current = u;
+  });
+  if (current && !$("#m-audio").paused) {
+    const box = $("#m-transcript"), top = current.offsetTop - box.offsetTop;
+    if (top < box.scrollTop || top > box.scrollTop + box.clientHeight - 60) box.scrollTop = top - 40;
+  }
+};
 
 $("#save-speakers").onclick = async () => {
   const names = {};

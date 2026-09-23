@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS meetings (
     decisions_json TEXT,
     diarization_method TEXT,
     duration_sec REAL,
+    audio_path TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS tasks (
@@ -60,6 +61,10 @@ def _conn() -> sqlite3.Connection:
 def init_db() -> None:
     with _lock, _conn() as c:
         c.executescript(SCHEMA)
+        # миграция для баз, созданных до появления воспроизведения записи
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(meetings)")}
+        if "audio_path" not in cols:
+            c.execute("ALTER TABLE meetings ADD COLUMN audio_path TEXT")
 
 
 def _now() -> str:
@@ -94,7 +99,14 @@ def _meeting_row(row: sqlite3.Row) -> dict:
     m["speakers"] = json.loads(m.pop("speakers_json") or "{}")
     m["decisions"] = json.loads(m.pop("decisions_json") or "[]")
     m["consent"] = bool(m["consent"])
+    m["has_audio"] = bool(m.pop("audio_path", None))  # путь к файлу наружу не отдаём
     return m
+
+
+def get_audio_path(meeting_id: int) -> str | None:
+    with _conn() as c:
+        row = c.execute("SELECT audio_path FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
+    return row["audio_path"] if row else None
 
 
 def get_meeting(meeting_id: int) -> dict | None:

@@ -121,6 +121,7 @@ async def create_from_audio(file: UploadFile = File(...), title: str = Form(...)
         while chunk := await file.read(1024 * 1024):
             f.write(chunk)
     mid = db.create_meeting(title.strip() or "Совещание", meeting_date, file.filename or "запись", consent)
+    db.update_meeting(mid, audio_path=str(path))
     jobs.put(("audio", mid, path, num_speakers if num_speakers and num_speakers > 0 else None))
     return {"id": mid}
 
@@ -153,6 +154,19 @@ def meetings():
 @app.get("/api/meetings/{mid}")
 def meeting(mid: int):
     return _meeting_or_404(mid)
+
+
+AUDIO_TYPES = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4", ".ogg": "audio/ogg",
+               ".webm": "audio/webm", ".mp4": "video/mp4", ".opus": "audio/ogg", ".flac": "audio/flac"}
+
+
+@app.get("/api/meetings/{mid}/audio")
+def meeting_audio(mid: int):
+    """Исходная запись для прослушивания рядом со стенограммой (отдаётся только с этого сервера)."""
+    path = db.get_audio_path(mid)
+    if not path or not Path(path).exists():
+        raise HTTPException(404, "Запись недоступна")
+    return FileResponse(path, media_type=AUDIO_TYPES.get(Path(path).suffix.lower(), "application/octet-stream"))
 
 
 @app.delete("/api/meetings/{mid}")
