@@ -3,7 +3,9 @@
 Аудио никуда не отправляется: все модели скачиваются один раз и работают на этой машине.
 """
 import logging
+import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -22,11 +24,22 @@ KAZ_LETTERS = set("әғқңөұүһіӘҒҚҢӨҰҮҺІ")
 
 # ---------- подготовка аудио ----------
 
+def _ffmpeg() -> str:
+    """Путь к ffmpeg: FFMPEG_PATH из .env или поиск в PATH."""
+    path = os.getenv("FFMPEG_PATH") or shutil.which("ffmpeg")
+    if not path:
+        raise RuntimeError(
+            "ffmpeg не найден. Установите его (Windows: winget install ffmpeg) и перезапустите терминал, "
+            "либо укажите полный путь к ffmpeg.exe в .env: FFMPEG_PATH=C:\\путь\\ffmpeg.exe"
+        )
+    return path
+
+
 def to_wav16k(src: Path) -> Path:
     """Любой аудио/видеофайл -> WAV 16 кГц моно (нужен ffmpeg)."""
     dst = src.with_suffix(".16k.wav")
-    cmd = ["ffmpeg", "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000", "-f", "wav", str(dst)]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    cmd = [_ffmpeg(), "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000", "-f", "wav", str(dst)]
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg не смог обработать файл: {proc.stderr[-500:]}")
     return dst
@@ -39,6 +52,36 @@ def load_audio(wav: Path) -> np.ndarray:
         audio = audio.mean(axis=1)
     assert sr == 16000, "ожидается 16 кГц"
     return audio
+
+
+# ---------- скачивание моделей без symlink ----------
+# На Windows без прав администратора кэш Hugging Face падает с WinError 1314 (нельзя создавать
+# символические ссылки). Поэтому модели скачиваются обычными файлами в data/models (local_dir).
+
+def _download(repo_id: str, target: Path, allow_patterns: list[str] | None = None) -> Path:
+    from huggingface_hub import snapshot_download
+    target.mkdir(parents=True, exist_ok=True)
+    log.info("Модель %s -> %s", repo_id, target)
+    snapshot_download(repo_id, local_dir=str(target), allow_patterns=allow_patterns)
+    return target
+
+
+def _whisper_path() -> str:
+    name = config.WHISPER_MODEL
+    if Path(name).exists():  # уже локальная папка с моделью
+        return name
+    try:
+        from faster_whisper.utils import _MODELS
+        repo_id = _MODELS.get(name, name)
+    except ImportError:
+        repo_id = name
+    if "/" not in repo_id:
+        return name  # неизвестное имя — пусть faster-whisper разберётся сам
+    target = config.MODELS_DIR / "whisper" / repo_id.replace("/", "--")
+    if not (target / "model.bin").exists():
+        _download(repo_id, target, ["config.json", "preprocessor_config.json", "model.bin",
+                                    "tokenizer.json", "vocabulary.*"])
+    return str(target)
 
 
 # ---------- распознавание ----------
@@ -58,8 +101,7 @@ def _get_whisper():
         if compute == "auto":
             compute = "float16" if device == "cuda" else "int8"
         log.info("Загрузка Whisper %s (%s, %s)", config.WHISPER_MODEL, device, compute)
-        _whisper = WhisperModel(config.WHISPER_MODEL, device=device, compute_type=compute,
-                                download_root=str(config.MODELS_DIR / "whisper"))
+        _whisper = WhisperModel(_whisper_path(), device=device, compute_type=compute)
     return _whisper
 
 
@@ -77,23 +119,60 @@ def detect_lang(text: str) -> str:
     return "ru"
 
 
-def transcribe(wav: Path) -> tuple[list[dict], float]:
+# Типичные «галлюцинации» Whisper на тишине и концовках записей (титры из обучающих данных)
+HALLUCINATIONS = re.compile(
+    r"sous-titrage|subtit|amara\.org|субтитр|продолжение следует|спасибо за просмотр|"
+    r"подписывайтесь на канал|dimatorzok|редактор субтитров",
+    re.I,
+)
+
+
+def _split_sentences(seg) -> list[dict]:
+    """Режет фрагмент Whisper на предложения по словам с таймкодами.
+
+    Whisper часто склеивает в один фрагмент реплики разных людей («Сделаю. Ербулат Мухтарович, по вашему…»).
+    Короткие единицы-предложения дают диаризации возможность разделить говорящих.
+    """
+    words = getattr(seg, "words", None)
+    if not words:
+        return [{"start": seg.start, "end": seg.end, "text": seg.text.strip()}]
+    out, cur = [], []
+    for w in words:
+        cur.append(w)
+        if w.word.strip().endswith((".", "?", "!", "…")):
+            out.append(cur)
+            cur = []
+    if cur:
+        out.append(cur)
+    return [{"start": ws[0].start, "end": ws[-1].end, "text": "".join(x.word for x in ws).strip()}
+            for ws in out if "".join(x.word for x in ws).strip()]
+
+
+def transcribe(wav: Path, on_progress=None) -> tuple[list[dict], float]:
+    """on_progress(segments, done_sec, total_sec) вызывается по мере распознавания."""
     model = _get_whisper()
     kwargs = dict(beam_size=5, vad_filter=True, initial_prompt=config.WHISPER_PROMPT,
-                  condition_on_previous_text=False)
+                  condition_on_previous_text=False, word_timestamps=True)
     try:
         # multilingual=True: язык определяется для каждого фрагмента — важно для смешанной речи
         segments, info = model.transcribe(str(wav), multilingual=True, **kwargs)
     except TypeError:  # старая версия faster-whisper
         segments, info = model.transcribe(str(wav), **kwargs)
+    total = float(getattr(info, "duration", 0.0) or 0.0)
     result = []
     for s in segments:
         text = s.text.strip()
-        if not text:
+        if not text or HALLUCINATIONS.search(text):
             continue
-        result.append({"start": round(s.start, 2), "end": round(s.end, 2), "text": text,
-                       "lang": detect_lang(text)})
-    return result, float(getattr(info, "duration", 0.0) or 0.0)
+        # тишина, которую модель «озвучила»: высокая вероятность отсутствия речи и низкая уверенность
+        if getattr(s, "no_speech_prob", 0) > 0.6 and getattr(s, "avg_logprob", 0) < -1.0:
+            continue
+        for part in _split_sentences(s):
+            result.append({"start": round(part["start"], 2), "end": round(part["end"], 2),
+                           "text": part["text"], "lang": detect_lang(part["text"]), "speaker": "…"})
+        if on_progress:
+            on_progress(result, s.end, total)
+    return result, total
 
 
 # ---------- диаризация ----------
@@ -131,8 +210,10 @@ def _get_ecapa():
     global _ecapa
     if _ecapa is None:
         from speechbrain.inference.speaker import EncoderClassifier
-        kwargs = dict(source="speechbrain/spkrec-ecapa-voxceleb",
-                      savedir=str(config.MODELS_DIR / "ecapa"), run_opts={"device": "cpu"})
+        src = config.MODELS_DIR / "ecapa-source"
+        if not (src / "hyperparams.yaml").exists():
+            _download("speechbrain/spkrec-ecapa-voxceleb", src)
+        kwargs = dict(source=str(src), savedir=str(config.MODELS_DIR / "ecapa"), run_opts={"device": "cpu"})
         try:
             from speechbrain.utils.fetching import LocalStrategy
             _ecapa = EncoderClassifier.from_hparams(local_strategy=LocalStrategy.COPY, **kwargs)
@@ -151,7 +232,7 @@ def _diarize_ecapa(wav: Path, segments: list[dict], num_speakers: int | None) ->
     for i, seg in enumerate(segments):
         a, b = int(seg["start"] * 16000), int(seg["end"] * 16000)
         chunk = audio[a:b]
-        if len(chunk) < 16000 * 0.6:  # слишком короткие фрагменты дают шумный эмбеддинг
+        if len(chunk) < 16000 * 0.5:  # слишком короткие фрагменты дают шумный эмбеддинг
             continue
         with torch.no_grad():
             emb = model.encode_batch(torch.from_numpy(chunk).unsqueeze(0)).squeeze().cpu().numpy()

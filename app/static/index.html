@@ -382,11 +382,12 @@ function renderMeeting(m) {
 
   const order = speakerOrder(m);
   const color = (spk) => COLORS[order.indexOf(spk) % COLORS.length];
-  const name = (spk) => m.speakers[spk] || spk;
-  $("#m-speakers").innerHTML = m.diarization_method === "text" ? "" : order.map(s => `
+  const name = (spk) => spk === "…" ? "Говорящий определяется" : (m.speakers[spk] || spk);
+  const realOrder = order.filter(s => s !== "…");
+  $("#m-speakers").innerHTML = m.diarization_method === "text" ? "" : realOrder.map(s => `
     <label><span class="swatch" style="background:${color(s)}"></span>${esc(s)}
       <input type="text" data-spk="${esc(s)}" value="${esc(m.speakers[s] || "")}" placeholder="Имя"></label>`).join("");
-  $("#speakers-actions").hidden = !order.length || m.diarization_method === "text";
+  $("#speakers-actions").hidden = !realOrder.length || m.diarization_method === "text";
 
   setupAudio(m);
   renderTranscript(m, color, name, busy);

@@ -46,7 +46,12 @@ def process_audio(mid: int, path: Path, num_speakers: int | None) -> None:
     _set(mid, "converting", "Подготовка аудио")
     wav = stt.to_wav16k(path)
     _set(mid, "transcribing", f"Распознавание речи ({config.WHISPER_MODEL}), это может занять несколько минут")
-    segments, duration = stt.transcribe(wav)
+    def progress(segments, done, total):
+        # промежуточная стенограмма видна в интерфейсе, пока идёт распознавание
+        pct = f"{int(done)//60:02d}:{int(done)%60:02d} из {int(total)//60:02d}:{int(total)%60:02d}" if total else ""
+        db.update_meeting(mid, segments=segments, stage_note=f"Распознано {pct}. Говорящие определятся после распознавания")
+
+    segments, duration = stt.transcribe(wav, on_progress=progress)
     _set(mid, "diarizing", "Определение говорящих")
     method = stt.diarize(wav, segments, num_speakers) if segments else "none"
     db.update_meeting(mid, segments=segments, diarization_method=method, duration_sec=duration)
