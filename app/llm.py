@@ -20,6 +20,11 @@ SYSTEM_PROMPT = """Ты — ассистент секретаря совещан
 {
   "summary": "краткое саммари совещания на русском, 3–6 предложений",
   "decisions": ["принятое решение 1", "..."],
+  "reports": [
+    {"direction": "направление или тема доклада", "speaker": "кто докладывал (имя или метка говорящего)",
+     "metric": "ключевой показатель, который назвали (например, «выпуск 94% от плана»), или null",
+     "problem": "озвученная проблема или null"}
+  ],
   "participants": {"Спикер 1": "имя, если оно прозвучало в разговоре, иначе null"},
   "tasks": [
     {
@@ -40,6 +45,9 @@ SYSTEM_PROMPT = """Ты — ассистент секретаря совещан
 - Исполнитель: обычно это тот, к кому обращаются («Ерлан, подготовь…») или кто отвечает согласием («Хорошо, сделаю», «Жарайды, орындаймын»). Определи его метку говорящего по контексту диалога.
 - Если имя человека звучит в обращении, а следующим отвечает определённый говорящий, свяжи это имя с его меткой в "participants" и "assignee_speaker".
 - Срок вычисляй относительно даты совещания. Казахские слова: дүйсенбі=понедельник, сейсенбі=вторник, сәрсенбі=среда, бейсенбі=четверг, жұма=пятница, сенбі=суббота, жексенбі=воскресенье, ертең=завтра, апта=неделя, ай=месяц. «До пятницы» = ближайшая пятница после даты совещания.
+- "reports" — по одному пункту на каждый доклад или обсуждённую тему: направление, показатель, проблема. Если совещание не состоит из докладов, перечисли основные обсуждённые темы.
+- Если в конце совещания руководитель подводит итоги и уточняет поручения или сроки, итоговая формулировка важнее сказанного ранее.
+- Ответственным может быть человек, которого нет среди говорящих (например, «пусть юрист Ерлан подготовит…»): тогда укажи его имя в assignee, а assignee_speaker = null.
 - Если срок не назван — deadline и deadline_text = null. Не выдумывай сроки, имена и поручения.
 - Приоритет «высокий», если сказано «срочно», «шұғыл», «в первую очередь» или срок ≤ 2 дней.
 - Все тексты в ответе — на русском языке, кроме поля quote (оставь как в оригинале)."""
@@ -136,7 +144,7 @@ def analyze(segments: list[dict], meeting_date: date, speaker_names: dict | None
             on_progress=None) -> dict:
     transcript = format_transcript(segments, speaker_names)
     if not transcript.strip():
-        return {"summary": "Речь в записи не распознана.", "decisions": [], "participants": {}, "tasks": []}
+        return {"summary": "Речь в записи не распознана.", "decisions": [], "reports": [], "participants": {}, "tasks": []}
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": _user_prompt(transcript, meeting_date)}]
@@ -168,7 +176,13 @@ def analyze(segments: list[dict], meeting_date: date, speaker_names: dict | None
 
     participants = {k: v for k, v in (data.get("participants") or {}).items()
                     if k in known_speakers and isinstance(v, str) and v.strip() and v.lower() != "null"}
+    reports = []
+    for r in data.get("reports") or []:
+        if isinstance(r, dict) and (r.get("direction") or r.get("problem")):
+            reports.append({k: (str(r.get(k)).strip() if r.get(k) not in (None, "null") else None)
+                            for k in ("direction", "speaker", "metric", "problem")})
     return {
+        "reports": reports,
         "summary": (data.get("summary") or "").strip(),
         "decisions": [d for d in (data.get("decisions") or []) if isinstance(d, str) and d.strip()],
         "participants": participants,

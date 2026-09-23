@@ -43,7 +43,8 @@ def run_analysis(mid: int) -> None:
     speakers = dict(m["speakers"])
     for label, name in result["participants"].items():
         speakers.setdefault(label, name)  # имена, заданные вручную, не перезаписываем
-    db.update_meeting(mid, summary=result["summary"], decisions=result["decisions"], speakers=speakers)
+    db.update_meeting(mid, summary=result["summary"], decisions=result["decisions"], reports=result["reports"],
+                      speakers=speakers)
     db.replace_tasks(mid, result["tasks"])
     _set(mid, "done", f"Готово: поручений — {len(result['tasks'])}")
 

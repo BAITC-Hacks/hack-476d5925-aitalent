@@ -67,6 +67,21 @@ def export_docx(meeting: dict) -> Path:
     doc.add_heading("Краткое содержание", level=1)
     doc.add_paragraph(meeting.get("summary") or "—")
 
+    if meeting.get("reports"):
+        doc.add_heading("Саммари по ключевым пунктам", level=1)
+        rt = doc.add_table(rows=1, cols=3)
+        rt.style = "Table Grid"
+        for cell, text in zip(rt.rows[0].cells, ["Направление / доклад", "Показатель", "Проблема"]):
+            cell.text = text
+            cell.paragraphs[0].runs[0].bold = True
+        for r in meeting["reports"]:
+            row = rt.add_row().cells
+            direction = r.get("direction") or "—"
+            if r.get("speaker"):
+                direction += f" ({_speaker(r['speaker'], p['names'])})"
+            for cell, text in zip(row, [direction, r.get("metric") or "—", r.get("problem") or "—"]):
+                cell.text = text
+
     if meeting.get("decisions"):
         doc.add_heading("Принятые решения", level=1)
         for d in meeting["decisions"]:
@@ -137,6 +152,23 @@ def export_pdf(meeting: dict) -> Path:
         story.append(Paragraph(f"<i>{CONSENT_NOTE}</i>", muted))
 
     story += [Paragraph("Краткое содержание", h2), Paragraph(e(meeting.get("summary") or "—"), body)]
+
+    if meeting.get("reports"):
+        story.append(Paragraph("Саммари по ключевым пунктам", h2))
+        rrows = [[Paragraph(f"<b>{h}</b>", small) for h in ["Направление / доклад", "Показатель", "Проблема"]]]
+        for r in meeting["reports"]:
+            direction = r.get("direction") or "—"
+            if r.get("speaker"):
+                direction += f" ({_speaker(r['speaker'], p['names'])})"
+            rrows.append([Paragraph(e(direction), small), Paragraph(e(r.get("metric") or "—"), small),
+                          Paragraph(e(r.get("problem") or "—"), small)])
+        rtable = Table(rrows, colWidths=[62 * mm, 45 * mm, 66 * mm], repeatRows=1)
+        rtable.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#999999")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF2")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        story.append(rtable)
 
     if meeting.get("decisions"):
         story.append(Paragraph("Принятые решения", h2))

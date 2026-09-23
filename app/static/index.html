@@ -197,6 +197,7 @@
       </div>
       <div class="stack">
         <div class="panel"><h3>Краткое содержание</h3><p id="m-summary" style="margin:0"></p></div>
+        <div class="panel" id="m-reports-panel"><h3>Ключевые пункты по направлениям</h3><div class="table-wrap" id="m-reports"></div></div>
         <div class="panel" id="m-decisions-panel"><h3>Решения</h3><ul class="decisions" id="m-decisions"></ul></div>
         <div class="panel"><h3>Поручения</h3><div class="table-wrap" id="m-tasks"></div></div>
       </div>
@@ -241,7 +242,9 @@ const fmtDate = (iso) => iso ? iso.split("-").reverse().join(".") : "";
 const fmtTs = (s) => { s = Math.floor(s); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); };
 
 // ---------- навигация ----------
-function show(view) {
+function show(view, meetingId) {
+  const hash = view === "meeting" ? `#meeting/${meetingId}` : `#${view}`;
+  if (location.hash !== hash) history.replaceState(null, "", hash);
   document.querySelectorAll("main > section").forEach(s => s.hidden = s.id !== "view-" + view);
   document.querySelectorAll("nav button").forEach(b =>
     b.setAttribute("aria-current", (b.dataset.view === view || (view === "meeting" && b.dataset.view === "meetings")) ? "page" : "false"));
@@ -339,7 +342,13 @@ $("#text-btn").onclick = async () => {
 
 // ---------- список протоколов ----------
 async function loadMeetings() {
-  const list = await api("/api/meetings");
+  $("#meeting-list").innerHTML = `<p class="empty">Загрузка…</p>`;
+  let list;
+  try { list = await api("/api/meetings"); }
+  catch (e) {
+    $("#meeting-list").innerHTML = `<p class="error-box">Не удалось получить список протоколов: ${esc(e.message)}. Проверьте, что сервер запущен, и обновите страницу.</p>`;
+    return;
+  }
   $("#meeting-list").innerHTML = list.length ? list.map(m => `
     <div class="row" data-id="${m.id}" tabindex="0">
       <div><div>${esc(m.title)}</div><div class="meta">${fmtDate(m.meeting_date)} · поручений: ${m.task_count}</div></div>
@@ -353,9 +362,17 @@ async function loadMeetings() {
 
 // ---------- протокол ----------
 async function openMeeting(id) {
-  show("meeting");
+  show("meeting", id);
   clearTimeout(pollTimer);
-  const m = await api("/api/meetings/" + id);
+  let m;
+  try { m = await api("/api/meetings/" + id); }
+  catch (e) {
+    $("#m-title").textContent = "Протокол";
+    $("#m-error").hidden = false;
+    $("#m-error").textContent = `Не удалось загрузить протокол: ${e.message}. Повторная попытка через 5 секунд.`;
+    pollTimer = setTimeout(() => openMeeting(id), 5000);
+    return;
+  }
   currentMeeting = m;
   renderMeeting(m);
   if (!["done", "error"].includes(m.status)) pollTimer = setTimeout(() => openMeeting(id), 2500);
@@ -393,6 +410,11 @@ function renderMeeting(m) {
   renderTranscript(m, color, name, busy);
 
   $("#m-summary").textContent = m.summary || (busy ? "Появится после анализа." : "—");
+  const reports = m.reports || [];
+  $("#m-reports-panel").hidden = !reports.length;
+  $("#m-reports").innerHTML = reports.length ? `<table><thead><tr><th>Направление</th><th>Показатель</th><th>Проблема</th></tr></thead><tbody>
+    ${reports.map(r => `<tr><td>${esc(r.direction || "—")}${r.speaker ? `<div class="meta">${esc(name(r.speaker))}</div>` : ""}</td>
+      <td>${esc(r.metric || "—")}</td><td>${esc(r.problem || "—")}</td></tr>`).join("")}</tbody></table>` : "";
   $("#m-decisions-panel").hidden = !m.decisions.length;
   $("#m-decisions").innerHTML = m.decisions.map(d => `<li>${esc(d)}</li>`).join("");
   $("#m-tasks").innerHTML = m.tasks.length ? taskTable(m.tasks, false) : `<p class="empty">${busy ? "Поручения появятся после анализа." : "Поручения не выявлены."}</p>`;
@@ -513,6 +535,13 @@ document.querySelectorAll("#filters button").forEach(b => b.onclick = () => {
 
 loadHealth();
 setInterval(loadHealth, 30000);
+
+// восстановить экран по адресу (#meetings, #tasks, #meeting/6)
+(function route() {
+  const [view, id] = location.hash.slice(1).split("/");
+  if (view === "meeting" && id) openMeeting(id);
+  else if (["meetings", "tasks", "new"].includes(view)) show(view);
+})();
 </script>
 </body>
 </html>

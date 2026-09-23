@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS meetings (
     diarization_method TEXT,
     duration_sec REAL,
     audio_path TEXT,
+    reports_json TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS tasks (
@@ -65,6 +66,8 @@ def init_db() -> None:
         cols = {r["name"] for r in c.execute("PRAGMA table_info(meetings)")}
         if "audio_path" not in cols:
             c.execute("ALTER TABLE meetings ADD COLUMN audio_path TEXT")
+        if "reports_json" not in cols:
+            c.execute("ALTER TABLE meetings ADD COLUMN reports_json TEXT")
 
 
 def _now() -> str:
@@ -83,7 +86,7 @@ def create_meeting(title: str, meeting_date: str, source: str, consent: bool) ->
 
 
 def update_meeting(meeting_id: int, **fields) -> None:
-    for key in ("segments", "speakers", "decisions"):
+    for key in ("segments", "speakers", "decisions", "reports"):
         if key in fields:
             fields[f"{key}_json"] = json.dumps(fields.pop(key), ensure_ascii=False)
     if not fields:
@@ -98,6 +101,7 @@ def _meeting_row(row: sqlite3.Row) -> dict:
     m["segments"] = json.loads(m.pop("segments_json") or "[]")
     m["speakers"] = json.loads(m.pop("speakers_json") or "{}")
     m["decisions"] = json.loads(m.pop("decisions_json") or "[]")
+    m["reports"] = json.loads(m.pop("reports_json", None) or "[]")
     m["consent"] = bool(m["consent"])
     m["has_audio"] = bool(m.pop("audio_path", None))  # путь к файлу наружу не отдаём
     return m
