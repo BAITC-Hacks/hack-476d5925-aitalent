@@ -15,7 +15,7 @@
 | Распознавание речи | faster-whisper (`large-v3-turbo` по умолчанию), локально, CPU или GPU |
 | Русский, казахский, смешанная речь | Мультиязычный режим Whisper с определением языка по фрагментам + подсказка с казахской и русской лексикой совещаний. У каждой реплики — метка «рус / қаз / смеш.» |
 | Диаризация и привязка поручения к человеку | ECAPA-эмбеддинги (SpeechBrain) + кластеризация, без токенов и аккаунтов. Опционально pyannote. Говорящим можно присвоить имена, и поручения автоматически показываются с этими именами. LLM сама связывает прозвучавшие в обращениях имена с метками говорящих |
-| Выделение поручений с ответственным и сроком | Локальная LLM (Ollama, `qwen2.5:7b`) возвращает структурированный JSON. Относительные сроки («до пятницы», «жұмаға дейін», «келесі дүйсенбіге дейін») пересчитываются в даты от даты совещания |
+| Выделение поручений с ответственным и сроком | Локальная LLM (Ollama, `qwen2.5:3b`; на машине с GPU можно `qwen2.5:7b`) возвращает структурированный JSON. Относительные сроки («до пятницы», «жұмаға дейін», «келесі дүйсенбіге дейін») пересчитываются в даты от даты совещания |
 | Саммари | Краткое содержание, таблица ключевых пунктов по направлениям (показатель и проблема по каждому докладу) и список принятых решений |
 | Экспорт PDF/DOCX | Протокол с участниками, саммари, решениями, таблицей поручений и стенограммой. PDF со встроенным шрифтом DejaVu (поддерживает казахские буквы) |
 
@@ -68,13 +68,13 @@ flowchart LR
 
 ## Технологии
 
-Python 3.10+, FastAPI, faster-whisper (CTranslate2), SpeechBrain ECAPA-TDNN, scikit-learn, Ollama с моделью Qwen2.5, SQLite, python-docx, ReportLab, ffmpeg. Фронтенд на чистом HTML и JavaScript.
+Python 3.10+, FastAPI, faster-whisper (CTranslate2), SpeechBrain ECAPA-TDNN, scikit-learn, Ollama с моделью Qwen2.5 3B, SQLite, python-docx, ReportLab, ffmpeg. Фронтенд на чистом HTML и JavaScript.
 
 ## Системные требования
 
 - Python 3.10–3.12
 - ffmpeg
-- 16 ГБ ОЗУ рекомендуется (Whisper large-v3-turbo + LLM 7B); на 8 ГБ используйте `WHISPER_MODEL=small` и `LLM_MODEL=qwen2.5:3b`
+- 16 ГБ ОЗУ рекомендуется (Whisper large-v3-turbo + LLM 3B); на 8 ГБ используйте `WHISPER_MODEL=small`. Если есть GPU NVIDIA, можно поставить более точную `LLM_MODEL=qwen2.5:7b`
 - около 8 ГБ на диске для моделей
 - GPU NVIDIA необязателен, но ускоряет обработку в несколько раз
 - интернет нужен только при первом запуске для скачивания моделей; дальше всё работает офлайн
@@ -97,7 +97,7 @@ winget install ffmpeg
 Установите Ollama с https://ollama.com/download, затем:
 
 ```bash
-ollama pull qwen2.5:7b
+ollama pull qwen2.5:3b
 ```
 
 Ollama после установки работает как служба на `http://localhost:11434`. Если нет, запустите `ollama serve`.
@@ -135,7 +135,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```bash
 cp .env.example .env
 docker compose up -d --build
-docker compose exec ollama ollama pull qwen2.5:7b
+docker compose exec ollama ollama pull qwen2.5:3b
 ```
 
 ## Переменные окружения
@@ -150,7 +150,7 @@ docker compose exec ollama ollama pull qwen2.5:7b
 | `DIAR_THRESHOLD` | `0.65` | Порог кластеризации ECAPA, если число участников не указано |
 | `LLM_BACKEND` | `ollama` | `ollama` или `openai_compatible` (vLLM, NVIDIA NIM on-prem, LM Studio) |
 | `LLM_BASE_URL` | `http://localhost:11434` | Адрес локального LLM-сервера |
-| `LLM_MODEL` | `qwen2.5:7b` | Модель LLM |
+| `LLM_MODEL` | `qwen2.5:3b` | Модель LLM (`qwen2.5:7b` точнее, но на CPU работает в 2–3 раза медленнее) |
 | `ALLOW_EXTERNAL_LLM` | `0` | Запросы к нелокальным адресам блокируются, пока не выставлено `1` |
 | `REMIND_DAYS_BEFORE` | `1` | За сколько дней до срока напоминать |
 
