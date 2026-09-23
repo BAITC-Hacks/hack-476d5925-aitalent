@@ -31,8 +31,15 @@ def _set(mid: int, status: str, note: str = "") -> None:
 
 def run_analysis(mid: int) -> None:
     m = db.get_meeting(mid)
-    _set(mid, "analyzing", "Выделение поручений и саммари (локальная LLM)")
-    result = llm.analyze(m["segments"], date.fromisoformat(m["meeting_date"]), m["speakers"])
+    _set(mid, "analyzing", "Выделение поручений и саммари (локальная LLM): модель читает стенограмму")
+    last = [0]
+
+    def progress(chars: int) -> None:
+        if chars - last[0] >= 150:  # не пишем в базу на каждый токен
+            last[0] = chars
+            db.update_meeting(mid, stage_note=f"Локальная LLM формирует протокол: {chars} символов ответа")
+
+    result = llm.analyze(m["segments"], date.fromisoformat(m["meeting_date"]), m["speakers"], progress)
     speakers = dict(m["speakers"])
     for label, name in result["participants"].items():
         speakers.setdefault(label, name)  # имена, заданные вручную, не перезаписываем

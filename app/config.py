@@ -38,8 +38,8 @@ LLM_BACKEND = os.getenv("LLM_BACKEND", "ollama")               # ollama | openai
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:7b")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
-LLM_NUM_CTX = int(os.getenv("LLM_NUM_CTX", "16384"))
-LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "600"))
+LLM_NUM_CTX = int(os.getenv("LLM_NUM_CTX", "8192"))
+LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "900"))
 # Защита закрытого контура: запрос к нелокальному LLM блокируется, пока явно не разрешён.
 ALLOW_EXTERNAL_LLM = os.getenv("ALLOW_EXTERNAL_LLM", "0") == "1"
 

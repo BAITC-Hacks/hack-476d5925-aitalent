@@ -51,32 +51,54 @@ def _user_prompt(transcript: str, meeting_date: date) -> str:
 
 
 def format_transcript(segments: list[dict], speaker_names: dict | None = None) -> str:
+    """Подряд идущие реплики одного говорящего объединяются: меньше токенов — быстрее локальная LLM."""
     speaker_names = speaker_names or {}
-    lines = []
+    blocks: list[list] = []
     for s in segments:
-        m, sec = divmod(int(s["start"]), 60)
-        spk = s.get("speaker", "Спикер")
+        if blocks and blocks[-1][1] == s.get("speaker"):
+            blocks[-1][2].append(s["text"])
+        else:
+            blocks.append([s["start"], s.get("speaker", "Спикер"), [s["text"]]])
+    lines = []
+    for start, spk, texts in blocks:
+        m, sec = divmod(int(start), 60)
         name = speaker_names.get(spk)
         label = f"{spk} ({name})" if name and name != spk else spk
-        lines.append(f"[{m:02d}:{sec:02d}] {label}: {s['text']}")
+        lines.append(f"[{m:02d}:{sec:02d}] {label}: {' '.join(texts)}")
     return "\n".join(lines)
 
 
-def _chat(messages: list[dict]) -> str:
+def _chat(messages: list[dict], on_progress=None) -> str:
     if not config.llm_is_local() and not config.ALLOW_EXTERNAL_LLM:
         raise RuntimeError(
             f"LLM_BASE_URL={config.LLM_BASE_URL} не является локальным адресом. Передача текста совещаний "
             "во внешние сервисы запрещена требованиями закрытого контура. Используйте локальный Ollama/vLLM."
         )
     headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"} if config.LLM_API_KEY else {}
-    with httpx.Client(timeout=config.LLM_TIMEOUT) as client:
+    # read-таймаут считается между порциями ответа, поэтому при стриминге длинная генерация не обрывается
+    timeout = httpx.Timeout(config.LLM_TIMEOUT, connect=10)
+    with httpx.Client(timeout=timeout) as client:
         if config.LLM_BACKEND == "ollama":
-            r = client.post(f"{config.LLM_BASE_URL}/api/chat", headers=headers, json={
-                "model": config.LLM_MODEL, "messages": messages, "stream": False, "format": "json",
-                "options": {"temperature": 0.1, "num_ctx": config.LLM_NUM_CTX},
-            })
-            r.raise_for_status()
-            return r.json()["message"]["content"]
+            payload = {
+                "model": config.LLM_MODEL, "messages": messages, "stream": True, "format": "json",
+                "keep_alive": "30m",
+                "options": {"temperature": 0.1, "num_ctx": config.LLM_NUM_CTX, "num_predict": 2048},
+            }
+            parts: list[str] = []
+            with client.stream("POST", f"{config.LLM_BASE_URL}/api/chat", headers=headers, json=payload) as r:
+                r.raise_for_status()
+                for line in r.iter_lines():
+                    if not line:
+                        continue
+                    chunk = json.loads(line)
+                    if chunk.get("error"):
+                        raise RuntimeError(f"Ollama: {chunk['error']}")
+                    parts.append(chunk.get("message", {}).get("content", ""))
+                    if on_progress:
+                        on_progress(sum(map(len, parts)))
+                    if chunk.get("done"):
+                        break
+            return "".join(parts)
         # OpenAI-совместимый self-hosted сервер (vLLM, NVIDIA NIM on-prem, LM Studio и т.п.)
         base = config.LLM_BASE_URL if config.LLM_BASE_URL.endswith("/v1") else f"{config.LLM_BASE_URL}/v1"
         r = client.post(f"{base}/chat/completions", headers=headers, json={
@@ -110,21 +132,22 @@ def _clean_date(value, meeting_date: date) -> str | None:
     return d.isoformat()
 
 
-def analyze(segments: list[dict], meeting_date: date, speaker_names: dict | None = None) -> dict:
+def analyze(segments: list[dict], meeting_date: date, speaker_names: dict | None = None,
+            on_progress=None) -> dict:
     transcript = format_transcript(segments, speaker_names)
     if not transcript.strip():
         return {"summary": "Речь в записи не распознана.", "decisions": [], "participants": {}, "tasks": []}
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": _user_prompt(transcript, meeting_date)}]
-    raw = _chat(messages)
+    raw = _chat(messages, on_progress)
     try:
         data = _parse_json(raw)
     except (json.JSONDecodeError, ValueError):
         log.warning("LLM вернула невалидный JSON, повторяю запрос")
         messages += [{"role": "assistant", "content": raw},
                      {"role": "user", "content": "Ответ не является валидным JSON. Верни только JSON-объект."}]
-        data = _parse_json(_chat(messages))
+        data = _parse_json(_chat(messages, on_progress))
 
     known_speakers = {s.get("speaker") for s in segments}
     tasks = []
