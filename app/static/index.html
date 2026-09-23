@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Автопротокол совещаний</title>
+<style>
+  /* Без внешних шрифтов и CDN: приложение должно работать в закрытом контуре */
+  :root {
+    --paper: #F3F5F7; --surface: #FFFFFF; --ink: #17222D; --muted: #5B6875; --line: #D5DBE1;
+    --primary: #0B6E75; --primary-ink: #FFFFFF; --rec: #B3261E; --amber: #9A6200; --green: #2E7048;
+    --font: "Segoe UI", "Noto Sans", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.5 var(--font); }
+  header { background: var(--ink); color: #fff; padding: 14px 24px; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; letter-spacing: .01em; }
+  nav { display: flex; gap: 4px; }
+  nav button { background: none; border: 0; color: #C9D3DC; font: inherit; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+  nav button[aria-current="page"] { background: #2A3846; color: #fff; }
+  .contour { margin-left: auto; font-size: 13px; color: #C9D3DC; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #7C8894; display: inline-block; }
+  .dot.ok { background: #5FD08B; } .dot.bad { background: #FF6B5E; }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px; }
+  h2 { font-size: 22px; margin: 0 0 16px; font-weight: 600; }
+  h3 { font-size: 16px; margin: 0 0 10px; font-weight: 600; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 860px) { .grid2, .meeting-layout { grid-template-columns: 1fr !important; } }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+  input[type=text], input[type=date], input[type=number], textarea, select {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font: inherit; background: #fff; color: var(--ink);
+  }
+  textarea { min-height: 180px; resize: vertical; }
+  button.btn { font: inherit; border: 1px solid var(--line); background: #fff; color: var(--ink); padding: 8px 14px; border-radius: 6px; cursor: pointer; }
+  button.btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+  button.btn:disabled { opacity: .5; cursor: not-allowed; }
+  :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  .consent { display: flex; gap: 10px; align-items: flex-start; background: #EAF3F4; border-radius: 8px; padding: 12px; margin: 0 0 20px; font-size: 14px; }
+  .consent input { margin-top: 3px; }
+
+  /* Запись — главный элемент экрана */
+  .recorder { display: flex; align-items: center; gap: 20px; margin: 8px 0 4px; }
+  .rec-btn { width: 84px; height: 84px; border-radius: 50%; border: 4px solid var(--rec); background: #fff; cursor: pointer; display: grid; place-items: center; flex: none; }
+  .rec-btn span { width: 34px; height: 34px; border-radius: 50%; background: var(--rec); transition: border-radius .2s, width .2s, height .2s; }
+  .rec-btn.on span { border-radius: 6px; width: 28px; height: 28px; }
+  .rec-btn:disabled { border-color: var(--line); cursor: not-allowed; } .rec-btn:disabled span { background: var(--line); }
+  .timer { font-size: 34px; font-variant-numeric: tabular-nums; font-weight: 300; }
+  .live { display: none; color: var(--rec); font-size: 14px; }
+  .recording .live { display: block; }
+  .recording .timer { color: var(--rec); }
+  @media (prefers-reduced-motion: no-preference) { .recording .live::before { content: "● "; animation: blink 1.2s infinite; } }
+  @keyframes blink { 50% { opacity: .2; } }
+  .or { color: var(--muted); font-size: 13px; margin: 18px 0 0; }
+
+  .list { display: flex; flex-direction: column; gap: 8px; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; background: #fff; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+  .row:hover { border-color: var(--primary); }
+  .meta { color: var(--muted); font-size: 13px; }
+  .status { font-size: 13px; padding: 2px 8px; border-radius: 10px; background: #EEF1F4; white-space: nowrap; }
+  .status.done { background: #E3F1E8; color: var(--green); } .status.error { background: #FBE7E5; color: var(--rec); }
+
+  .meeting-layout { display: grid; grid-template-columns: 1.15fr 1fr; gap: 20px; align-items: start; }
+  .progress { padding: 14px; border-radius: 8px; background: #EAF3F4; margin-bottom: 16px; }
+  .error-box { padding: 14px; border-radius: 8px; background: #FBE7E5; color: var(--rec); margin-bottom: 16px; white-space: pre-wrap; }
+  .transcript { max-height: 70vh; overflow: auto; }
+  .utt { display: grid; grid-template-columns: 48px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px solid #EEF1F4; }
+  .utt time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; padding-top: 2px; }
+  .spk { font-weight: 600; font-size: 13px; }
+  .lang { font-size: 11px; color: var(--muted); margin-left: 6px; }
+  .speakers { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .speakers label { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); }
+  .speakers input { width: 150px; padding: 4px 8px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .stack > * + * { margin-top: 16px; }
+  ul.decisions { margin: 0; padding-left: 20px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-weight: 600; font-size: 13px; color: var(--muted); padding: 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 8px; border-bottom: 1px solid #EEF1F4; vertical-align: top; }
+  .table-wrap { overflow-x: auto; }
+  .state { font-size: 12px; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+  .state.overdue { background: #FBE7E5; color: var(--rec); } .state.due_soon { background: #FFF1D6; color: var(--amber); }
+  .state.done { background: #E3F1E8; color: var(--green); } .state.in_progress { background: #EEF1F4; color: var(--muted); }
+  .quote { color: var(--muted); font-size: 12px; font-style: italic; margin-top: 2px; }
+  .counters { display: flex; gap: 24px; margin-bottom: 16px; flex-wrap: wrap; }
+  .counter b { font-size: 26px; font-weight: 600; display: block; line-height: 1.1; }
+  .counter span { font-size: 13px; color: var(--muted); }
+  .counter.overdue b { color: var(--rec); } .counter.due_soon b { color: var(--amber); } .counter.done b { color: var(--green); }
+  .filters { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filters button[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .notice { padding: 8px 12px; border-left: 3px solid var(--amber); background: #fff; margin-bottom: 6px; font-size: 14px; }
+  .notice.overdue { border-color: var(--rec); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .empty { color: var(--muted); padding: 24px 0; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Автопротокол совещаний</h1>
+  <nav>
+    <button data-view="new" aria-current="page">Новое совещание</button>
+    <button data-view="meetings">Протоколы</button>
+    <button data-view="tasks">Поручения</button>
+  </nav>
+  <div class="contour" id="contour"><span class="dot"></span><span>Проверка моделей…</span></div>
+</header>
+
+<main>
+  <!-- Новое совещание -->
+  <section id="view-new">
+    <h2>Новое совещание</h2>
+    <div class="consent">
+      <input type="checkbox" id="consent">
+      <label for="consent" style="margin:0;color:inherit;font-size:inherit">
+        Участники уведомлены, что ведётся аудиозапись и транскрибация с помощью ИИ.
+        Запись обрабатывается только на этом сервере и не передаётся во внешние сервисы.
+      </label>
+    </div>
+    <div class="grid2">
+      <div class="panel">
+        <h3>Параметры</h3>
+        <label for="title">Название</label>
+        <input type="text" id="title" placeholder="Например: Планёрка отдела цифровизации">
+        <label for="mdate">Дата совещания</label>
+        <input type="date" id="mdate">
+        <label for="nspk">Число участников (если известно — диаризация точнее)</label>
+        <input type="number" id="nspk" min="1" max="20" placeholder="Определить автоматически">
+      </div>
+      <div class="panel" id="rec-panel">
+        <h3>Запись в браузере</h3>
+        <div class="recorder">
+          <button class="rec-btn" id="rec-btn" aria-label="Начать запись" disabled><span></span></button>
+          <div>
+            <div class="timer" id="timer">00:00</div>
+            <div class="live">Идёт запись и ИИ-транскрибация</div>
+          </div>
+        </div>
+        <p class="or">Или загрузите запись совещания (аудио или видео: mp3, wav, m4a, ogg, mp4, webm)</p>
+        <input type="file" id="file" accept="audio/*,video/*">
+        <div class="actions" style="margin-top:12px">
+          <button class="btn primary" id="upload-btn" disabled>Обработать запись</button>
+        </div>
+      </div>
+    </div>
+    <details class="panel" style="margin-top:20px">
+      <summary style="cursor:pointer;font-weight:600">Проверить без аудио — вставить стенограмму</summary>
+      <p class="meta">Каждая реплика с новой строки в формате «Имя: текст». Распознавание речи пропускается, выделение поручений работает так же.</p>
+      <textarea id="text-transcript"></textarea>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn" id="sample-btn">Вставить пример</button>
+        <button class="btn primary" id="text-btn">Сформировать протокол</button>
+      </div>
+    </details>
+  </section>
+
+  <!-- Список протоколов -->
+  <section id="view-meetings" hidden>
+    <h2>Протоколы</h2>
+    <div class="list" id="meeting-list"></div>
+  </section>
+
+  <!-- Протокол -->
+  <section id="view-meeting" hidden>
+    <div class="actions" style="justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h2 id="m-title" style="margin:0"></h2>
+      <div class="actions" id="m-actions">
+        <button class="btn" data-export="docx">Скачать DOCX</button>
+        <button class="btn" data-export="pdf">Скачать PDF</button>
+        <button class="btn" id="reanalyze-btn">Переанализировать</button>
+      </div>
+    </div>
+    <p class="meta" id="m-meta"></p>
+    <div class="progress" id="m-progress" hidden></div>
+    <div class="error-box" id="m-error" hidden></div>
+    <div class="meeting-layout" id="m-body">
+      <div class="panel">
+        <h3>Стенограмма</h3>
+        <div class="speakers" id="m-speakers"></div>
+        <div class="actions" style="margin-bottom:10px" id="speakers-actions" hidden>
+          <button class="btn" id="save-speakers">Сохранить имена</button>
+        </div>
+        <div class="transcript" id="m-transcript"></div>
+      </div>
+      <div class="stack">
+        <div class="panel"><h3>Краткое содержание</h3><p id="m-summary" style="margin:0"></p></div>
+        <div class="panel" id="m-decisions-panel"><h3>Решения</h3><ul class="decisions" id="m-decisions"></ul></div>
+        <div class="panel"><h3>Поручения</h3><div class="table-wrap" id="m-tasks"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Дашборд поручений -->
+  <section id="view-tasks" hidden>
+    <h2>Поручения</h2>
+    <div class="counters" id="counters"></div>
+    <div id="notices"></div>
+    <div class="filters" id="filters">
+      <button class="btn" data-filter="all" aria-pressed="true">Все</button>
+      <button class="btn" data-filter="overdue" aria-pressed="false">Просрочено</button>
+      <button class="btn" data-filter="due_soon" aria-pressed="false">Скоро срок</button>
+      <button class="btn" data-filter="in_progress" aria-pressed="false">В работе</button>
+      <button class="btn" data-filter="done" aria-pressed="false">Выполнено</button>
+    </div>
+    <div class="panel table-wrap" id="all-tasks"></div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const STATE_LABEL = { overdue: "Просрочено", due_soon: "Скоро срок", in_progress: "В работе", done: "Выполнено" };
+const STATUS_LABEL = { queued: "В очереди", converting: "Подготовка", transcribing: "Распознавание", diarizing: "Говорящие", analyzing: "Анализ", done: "Готово", error: "Ошибка" };
+const LANG_LABEL = { ru: "рус", kk: "қаз", mixed: "смеш." };
+const COLORS = ["#0B6E75", "#8A4FB8", "#B85C1F", "#2E6FB8", "#6E7F1A", "#B8336A", "#4E5D6C", "#1F8A5E"];
+let currentMeeting = null, pollTimer = null, taskFilter = "all";
+
+async function api(url, opts = {}) {
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).detail || msg; } catch {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+const fmtDate = (iso) => iso ? iso.split("-").reverse().join(".") : "";
+const fmtTs = (s) => { s = Math.floor(s); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); };
+
+// ---------- навигация ----------
+function show(view) {
+  document.querySelectorAll("main > section").forEach(s => s.hidden = s.id !== "view-" + view);
+  document.querySelectorAll("nav button").forEach(b =>
+    b.setAttribute("aria-current", (b.dataset.view === view || (view === "meeting" && b.dataset.view === "meetings")) ? "page" : "false"));
+  if (view !== "meeting") clearTimeout(pollTimer);
+  if (view === "meetings") loadMeetings();
+  if (view === "tasks") loadTasks();
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => show(b.dataset.view));
+
+// ---------- статус контура ----------
+async function loadHealth() {
+  try {
+    const h = await api("/api/health");
+    const ok = h.llm.local && h.llm.reachable;
+    const text = !h.llm.local ? "Внимание: LLM вне закрытого контура"
+      : h.llm.reachable ? `Обработка локально: ${h.whisper_model} + ${h.llm.model}`
+      : `Локальная LLM недоступна (${h.llm.url})`;
+    $("#contour").innerHTML = `<span class="dot ${ok ? "ok" : "bad"}"></span><span>${esc(text)}</span>`;
+  } catch { $("#contour").innerHTML = `<span class="dot bad"></span><span>Сервер недоступен</span>`; }
+}
+
+// ---------- новое совещание ----------
+$("#mdate").value = new Date().toISOString().slice(0, 10);
+const consent = $("#consent");
+function refreshButtons() {
+  $("#rec-btn").disabled = !consent.checked && !recorder;
+  $("#upload-btn").disabled = !consent.checked || !$("#file").files.length;
+}
+consent.onchange = refreshButtons;
+$("#file").onchange = refreshButtons;
+
+let recorder = null, chunks = [], recStart = 0, recTimer = null;
+$("#rec-btn").onclick = async () => {
+  if (recorder) { recorder.stop(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recorder = new MediaRecorder(stream);
+    chunks = [];
+    recorder.ondataavailable = e => chunks.push(e.data);
+    recorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      clearInterval(recTimer);
+      $("#rec-panel").classList.remove("recording");
+      $("#rec-btn").classList.remove("on");
+      $("#rec-btn").setAttribute("aria-label", "Начать запись");
+      const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+      recorder = null;
+      refreshButtons();
+      await submitAudio(blob, "запись.webm");
+    };
+    recorder.start(1000);
+    recStart = Date.now();
+    recTimer = setInterval(() => $("#timer").textContent = fmtTs((Date.now() - recStart) / 1000), 500);
+    $("#rec-panel").classList.add("recording");
+    $("#rec-btn").classList.add("on");
+    $("#rec-btn").setAttribute("aria-label", "Остановить запись и обработать");
+  } catch (e) { alert("Нет доступа к микрофону: " + e.message); }
+};
+
+$("#upload-btn").onclick = () => submitAudio($("#file").files[0], $("#file").files[0].name);
+
+async function submitAudio(blob, name) {
+  const fd = new FormData();
+  fd.append("file", blob, name);
+  fd.append("title", $("#title").value || "Совещание");
+  fd.append("meeting_date", $("#mdate").value);
+  fd.append("consent", consent.checked);
+  if ($("#nspk").value) fd.append("num_speakers", $("#nspk").value);
+  $("#upload-btn").disabled = true;
+  try {
+    const { id } = await api("/api/meetings", { method: "POST", body: fd });
+    openMeeting(id);
+  } catch (e) { alert(e.message); }
+  finally { refreshButtons(); }
+}
+
+const SAMPLE = `Айгерим: Жарайды, коллеги, бастайық. Сегодня обсуждаем запуск портала обращений граждан.
+Айгерим: Ерлан, сен тестілеу нәтижесін жұмаға дейін дайындап бер, пожалуйста.
+Ерлан: Жарайды, орындаймын. Но мне нужны тестовые данные от Даны.
+Айгерим: Дана, передайте Ерлану обезличенные тестовые данные до завтра, это срочно.
+Дана: Хорошо, завтра утром скину.
+Айгерим: И ещё, Дана, келесі дүйсенбіге дейін презентацию для акимата подготовьте.
+Дана: Понятно, сделаю.
+Айгерим: Решили: запуск портала переносим на первое октября. Всем спасибо, рахмет.`;
+$("#sample-btn").onclick = () => $("#text-transcript").value = SAMPLE;
+$("#text-btn").onclick = async () => {
+  const transcript = $("#text-transcript").value.trim();
+  if (!transcript) return alert("Вставьте стенограмму");
+  try {
+    const { id } = await api("/api/meetings/text", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: $("#title").value || "Совещание (стенограмма)", meeting_date: $("#mdate").value, transcript }) });
+    openMeeting(id);
+  } catch (e) { alert(e.message); }
+};
+
+// ---------- список протоколов ----------
+async function loadMeetings() {
+  const list = await api("/api/meetings");
+  $("#meeting-list").innerHTML = list.length ? list.map(m => `
+    <div class="row" data-id="${m.id}" tabindex="0">
+      <div><div>${esc(m.title)}</div><div class="meta">${fmtDate(m.meeting_date)} · поручений: ${m.task_count}</div></div>
+      <span class="status ${m.status}">${STATUS_LABEL[m.status] || m.status}</span>
+    </div>`).join("") : `<p class="empty">Протоколов пока нет. Запишите или загрузите совещание на вкладке «Новое совещание».</p>`;
+  document.querySelectorAll("#meeting-list .row").forEach(r => {
+    r.onclick = () => openMeeting(r.dataset.id);
+    r.onkeydown = e => { if (e.key === "Enter") openMeeting(r.dataset.id); };
+  });
+}
+
+// ---------- протокол ----------
+async function openMeeting(id) {
+  show("meeting");
+  clearTimeout(pollTimer);
+  const m = await api("/api/meetings/" + id);
+  currentMeeting = m;
+  renderMeeting(m);
+  if (!["done", "error"].includes(m.status)) pollTimer = setTimeout(() => openMeeting(id), 2500);
+}
+
+function speakerOrder(m) {
+  const order = [];
+  m.segments.forEach(s => { if (!order.includes(s.speaker)) order.push(s.speaker); });
+  return order;
+}
+
+function renderMeeting(m) {
+  $("#m-title").textContent = m.title;
+  const diar = { ecapa: "ECAPA + кластеризация", pyannote: "pyannote", text: "из стенограммы" }[m.diarization_method] || "—";
+  $("#m-meta").textContent = `${fmtDate(m.meeting_date)} · источник: ${m.source}` +
+    (m.duration_sec ? ` · длительность ${fmtTs(m.duration_sec)}` : "") + ` · диаризация: ${diar}`;
+  const busy = !["done", "error"].includes(m.status);
+  $("#m-progress").hidden = !busy;
+  $("#m-progress").textContent = (STATUS_LABEL[m.status] || m.status) + (m.stage_note ? ": " + m.stage_note : "");
+  $("#m-error").hidden = m.status !== "error";
+  $("#m-error").textContent = "Обработка не завершена. " + (m.error || "");
+  $("#m-actions").querySelectorAll("[data-export]").forEach(b => b.disabled = m.status !== "done");
+  $("#reanalyze-btn").disabled = busy || !m.segments.length;
+
+  const order = speakerOrder(m);
+  const color = (spk) => COLORS[order.indexOf(spk) % COLORS.length];
+  const name = (spk) => m.speakers[spk] || spk;
+  $("#m-speakers").innerHTML = m.diarization_method === "text" ? "" : order.map(s => `
+    <label><span class="swatch" style="background:${color(s)}"></span>${esc(s)}
+      <input type="text" data-spk="${esc(s)}" value="${esc(m.speakers[s] || "")}" placeholder="Имя"></label>`).join("");
+  $("#speakers-actions").hidden = !order.length || m.diarization_method === "text";
+
+  $("#m-transcript").innerHTML = m.segments.length ? m.segments.map(s => `
+    <div class="utt"><time>${fmtTs(s.start)}</time>
+      <div><span class="spk" style="color:${color(s.speaker)}">${esc(name(s.speaker))}</span>
+      <span class="lang">${LANG_LABEL[s.lang] || ""}</span><div>${esc(s.text)}</div></div></div>`).join("")
+    : `<p class="empty">${busy ? "Стенограмма появится после распознавания." : "Речь не распознана."}</p>`;
+
+  $("#m-summary").textContent = m.summary || (busy ? "Появится после анализа." : "—");
+  $("#m-decisions-panel").hidden = !m.decisions.length;
+  $("#m-decisions").innerHTML = m.decisions.map(d => `<li>${esc(d)}</li>`).join("");
+  $("#m-tasks").innerHTML = m.tasks.length ? taskTable(m.tasks, false) : `<p class="empty">${busy ? "Поручения появятся после анализа." : "Поручения не выявлены."}</p>`;
+  bindTaskControls($("#m-tasks"), () => openMeeting(m.id));
+}
+
+$("#save-speakers").onclick = async () => {
+  const names = {};
+  document.querySelectorAll("#m-speakers input").forEach(i => names[i.dataset.spk] = i.value);
+  const m = await api(`/api/meetings/${currentMeeting.id}/speakers`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(names) });
+  currentMeeting = m; renderMeeting(m);
+};
+$("#reanalyze-btn").onclick = async () => { await api(`/api/meetings/${currentMeeting.id}/reanalyze`, { method: "POST" }); openMeeting(currentMeeting.id); };
+document.querySelectorAll("[data-export]").forEach(b => b.onclick = () => location.href = `/api/meetings/${currentMeeting.id}/export?format=${b.dataset.export}`);
+
+// ---------- поручения ----------
+function taskTable(tasks, withMeeting) {
+  return `<table><thead><tr><th>Поручение</th><th>Ответственный</th><th>Срок</th><th>Статус</th>${withMeeting ? "<th>Совещание</th>" : ""}<th></th></tr></thead><tbody>
+  ${tasks.map(t => `<tr>
+    <td>${esc(t.task)}${t.priority === "высокий" ? ' <span class="state overdue">срочно</span>' : ""}
+      ${t.category ? `<div class="meta">${esc(t.category)}</div>` : ""}${t.quote ? `<div class="quote">«${esc(t.quote)}»</div>` : ""}</td>
+    <td>${esc(t.assignee_display)}${t.assignee_speaker && t.assignee_display !== t.assignee_speaker ? `<div class="meta">${esc(t.assignee_speaker)}</div>` : ""}</td>
+    <td><input type="date" data-deadline="${t.id}" value="${t.deadline || ""}" aria-label="Срок">
+      ${t.deadline_text ? `<div class="meta">«${esc(t.deadline_text)}»</div>` : ""}</td>
+    <td><span class="state ${t.state}">${STATE_LABEL[t.state]}</span></td>
+    ${withMeeting ? `<td class="meta">${esc(t.meeting_title)}</td>` : ""}
+    <td><button class="btn" data-toggle="${t.id}" data-status="${t.status}">${t.status === "done" ? "Вернуть в работу" : "Выполнено"}</button></td>
+  </tr>`).join("")}</tbody></table>`;
+}
+
+function bindTaskControls(root, reload) {
+  root.querySelectorAll("[data-toggle]").forEach(b => b.onclick = async () => {
+    await api("/api/tasks/" + b.dataset.toggle, { method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: b.dataset.status === "done" ? "in_progress" : "done" }) });
+    reload();
+  });
+  root.querySelectorAll("[data-deadline]").forEach(i => i.onchange = async () => {
+    await api("/api/tasks/" + i.dataset.deadline, { method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deadline: i.value || null }) });
+    reload();
+  });
+}
+
+async function loadTasks() {
+  const [tasks, notes] = await Promise.all([api("/api/tasks"), api("/api/notifications")]);
+  const count = (s) => tasks.filter(t => t.state === s).length;
+  $("#counters").innerHTML = ["overdue", "due_soon", "in_progress", "done"].map(s =>
+    `<div class="counter ${s}"><b>${count(s)}</b><span>${STATE_LABEL[s]}</span></div>`).join("");
+  $("#notices").innerHTML = notes.slice(0, 5).map(n => `<div class="notice ${n.kind}">${esc(n.message)}</div>`).join("");
+  const shown = taskFilter === "all" ? tasks : tasks.filter(t => t.state === taskFilter);
+  $("#all-tasks").innerHTML = shown.length ? taskTable(shown, true) : `<p class="empty">Нет поручений в этой категории.</p>`;
+  bindTaskControls($("#all-tasks"), loadTasks);
+}
+document.querySelectorAll("#filters button").forEach(b => b.onclick = () => {
+  taskFilter = b.dataset.filter;
+  document.querySelectorAll("#filters button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  loadTasks();
+});
+
+loadHealth();
+setInterval(loadHealth, 30000);
+</script>
+</body>
+</html>

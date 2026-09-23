@@ -1,0 +1,2 @@
+# Необязательно: более точная диаризация pyannote (нужен HF_TOKEN и принятие условий модели на Hugging Face)
+pyannote.audio>=3.1

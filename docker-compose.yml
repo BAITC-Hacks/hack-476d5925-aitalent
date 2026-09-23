@@ -1,0 +1,15 @@
+# Развёртывание в закрытом контуре: приложение + Ollama в одной внутренней сети
+services:
+  ollama:
+    image: ollama/ollama
+    volumes: [ollama:/root/.ollama]
+  app:
+    build: .
+    ports: ["8000:8000"]
+    env_file: .env
+    environment:
+      LLM_BASE_URL: http://ollama:11434
+    volumes: [./data:/app/data]
+    depends_on: [ollama]
+volumes:
+  ollama:
